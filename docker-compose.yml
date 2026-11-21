@@ -1,0 +1,62 @@
+version: "3.9"
+
+services:
+  postgres:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_USER: vuln_user
+      POSTGRES_PASSWORD: vuln_pass
+      POSTGRES_DB: vuln_platform
+    ports:
+      - "5432:5432"
+    volumes:
+      - pg_data:/var/lib/postgresql/data
+
+  redis:
+    image: redis:7-alpine
+    ports:
+      - "6379:6379"
+
+  minio:
+    image: minio/minio
+    command: server /data --console-address ":9001"
+    environment:
+      MINIO_ROOT_USER: minioadmin
+      MINIO_ROOT_PASSWORD: minioadmin
+    ports:
+      - "9000:9000"
+      - "9001:9001"
+    volumes:
+      - minio_data:/data
+
+  api:
+    build: ./backend
+    env_file: .env
+    depends_on: [postgres, redis, minio]
+    ports:
+      - "8000:8000"
+    volumes:
+      - ./backend:/app
+    # NOTE: the API container itself never executes untrusted model code -
+    # that only ever happens inside the per-job sandbox container spun up
+    # by module1_ingestion/sandbox/runner.py (Section 6.2).
+
+  worker:
+    build: ./backend
+    command: celery -A app.services.celery_app worker --loglevel=info
+    env_file: .env
+    depends_on: [postgres, redis, minio]
+    volumes:
+      - ./backend:/app
+      - /var/run/docker.sock:/var/run/docker.sock   # needed to launch sandbox containers
+
+  dashboard:
+    build: ./frontend/streamlit_app
+    env_file: .env
+    depends_on: [api]
+    ports:
+      - "8501:8501"
+
+volumes:
+  pg_data:
+  minio_data:
